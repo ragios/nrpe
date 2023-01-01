@@ -1,0 +1,12 @@
+[
+    {
+        "command": "cc -c -g -O2 -I/usr/include/krb5 -DHAVE_CONFIG_H -I ../include -I ./../include -o check_nrpe ./check_nrpe.c",
+        "directory": "/home/me/github/ragios/nrpe/src",
+        "file": "/home/me/github/ragios/nrpe/src/check_nrpe.c"
+    },
+    {
+        "command": "cc -c -g -O2 -I/usr/include/krb5 -DHAVE_CONFIG_H -I ../include -I ./../include -o check_nrpe ./utils.c",
+        "directory": "/home/me/github/ragios/nrpe/src",
+        "file": "/home/me/github/ragios/nrpe/src/utils.c"
+    }
+]
