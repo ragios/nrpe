@@ -77,7 +77,7 @@ install-uninstall:
 	$(INSTALL) -m 755 ../uninstall $(SBINDIR)/nrpe-uninstall
 
 clean:
-	rm -f core nrpe check_nrpe $(SNPRINTF_O)
+	rm -f check_nrpe1 $(SNPRINTF_O) *~
 	rm -f *~ */*~
 	rm -rf nrpe.dSYM check_nrpe.dSYM
 
