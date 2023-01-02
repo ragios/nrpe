@@ -1,0 +1,7 @@
+[
+    {
+        "command": "cc -c -g -O2 -I/usr/include/krb5 -DHAVE_CONFIG_H -I . -I . -o check_nrpe1 ./check_nrpe1.c",
+        "directory": "/home/me/github/ragios/nrpe/src/rust",
+        "file": "/home/me/github/ragios/nrpe/src/rust/check_nrpe1.c"
+    }
+]

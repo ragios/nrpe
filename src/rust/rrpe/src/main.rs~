@@ -273,12 +273,12 @@ extern "C" {
     ) -> libc::c_ulong;
     fn ERR_reason_error_string(e: libc::c_ulong) -> *const libc::c_char;
     fn RAND_set_rand_engine(engine: *mut ENGINE) -> libc::c_int;
+    fn X509_STORE_CTX_get_current_cert(ctx_0: *mut X509_STORE_CTX) -> *mut X509;
     fn X509_STORE_CTX_get_ex_data(
         ctx_0: *mut X509_STORE_CTX,
         idx: libc::c_int,
     ) -> *mut libc::c_void;
     fn X509_STORE_CTX_get_error(ctx_0: *mut X509_STORE_CTX) -> libc::c_int;
-    fn X509_STORE_CTX_get_current_cert(ctx_0: *mut X509_STORE_CTX) -> *mut X509;
     fn asprintf(
         ptr: *mut *mut libc::c_char,
         format: *const libc::c_char,
@@ -3730,6 +3730,386 @@ pub unsafe extern "C" fn send_request() -> libc::c_int {
     return 0 as libc::c_int;
 }
 #[no_mangle]
+pub unsafe extern "C" fn read_packet(
+    mut sock: libc::c_int,
+    mut ssl_ptr: *mut libc::c_void,
+    mut v2_pkt: *mut *mut v2_packet,
+    mut v3_pkt: *mut *mut v3_packet,
+) -> libc::c_int {
+    let mut packet: v2_packet = v2_packet {
+        packet_version: 0,
+        packet_type: 0,
+        crc32_value: 0,
+        result_code: 0,
+        buffer: [0; 1024],
+    };
+    let mut pkt_size: int32_t = 0;
+    let mut common_size: int32_t = 0;
+    let mut tot_bytes: int32_t = 0;
+    let mut bytes_to_recv: int32_t = 0;
+    let mut buffer_size: int32_t = 0;
+    let mut bytes_read: int32_t = 0 as libc::c_int;
+    let mut rc: libc::c_int = 0;
+    let mut buff_ptr: *mut libc::c_char = 0 as *mut libc::c_char;
+    bytes_to_recv = (packet.buffer)
+        .as_mut_ptr()
+        .offset_from(&mut packet as *mut v2_packet as *mut libc::c_char) as libc::c_long
+        as int32_t;
+    tot_bytes = bytes_to_recv;
+    common_size = tot_bytes;
+    if use_ssl == 0 as libc::c_int {
+        rc = recvall(
+            sock,
+            &mut packet as *mut v2_packet as *mut libc::c_char,
+            &mut tot_bytes,
+            socket_timeout,
+        );
+        if rc <= 0 as libc::c_int || rc != bytes_to_recv {
+            if rc < bytes_to_recv {
+                if packet_ver <= 3 as libc::c_int {
+                    printf(
+                        b"CHECK_NRPE: Receive header underflow - only %d bytes received (%zu expected).\n\0"
+                            as *const u8 as *const libc::c_char,
+                        rc,
+                        ::core::mem::size_of::<int32_t>() as libc::c_ulong,
+                    );
+                }
+            }
+            return -(1 as libc::c_int);
+        }
+        if packet_ver != __bswap_16(packet.packet_version as __uint16_t) as libc::c_int {
+            printf(
+                b"CHECK_NRPE: Invalid packet version received from server.\n\0"
+                    as *const u8 as *const libc::c_char,
+            );
+            return -(1 as libc::c_int);
+        }
+        if __bswap_16(packet.packet_type as __uint16_t) as libc::c_int
+            != 2 as libc::c_int
+        {
+            printf(
+                b"CHECK_NRPE: Invalid packet type received from server.\n\0" as *const u8
+                    as *const libc::c_char,
+            );
+            return -(1 as libc::c_int);
+        }
+        if packet_ver == 2 as libc::c_int {
+            pkt_size = ::core::mem::size_of::<v2_packet>() as libc::c_ulong as int32_t;
+            if payload_size > 0 as libc::c_int {
+                pkt_size = common_size + payload_size;
+                buffer_size = payload_size;
+            } else {
+                buffer_size = pkt_size - common_size;
+            }
+            *v2_pkt = calloc(
+                1 as libc::c_int as libc::c_ulong,
+                pkt_size as libc::c_ulong,
+            ) as *mut v2_packet;
+            if (*v2_pkt).is_null() {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Could not allocate memory for packet\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            memcpy(
+                *v2_pkt as *mut libc::c_void,
+                &mut packet as *mut v2_packet as *const libc::c_void,
+                common_size as libc::c_ulong,
+            );
+            buff_ptr = ((**v2_pkt).buffer).as_mut_ptr();
+            memset(
+                buff_ptr as *mut libc::c_void,
+                0 as libc::c_int,
+                buffer_size as libc::c_ulong,
+            );
+        } else {
+            pkt_size = (::core::mem::size_of::<v3_packet>() as libc::c_ulong)
+                .wrapping_sub(1 as libc::c_int as libc::c_ulong) as int32_t;
+            bytes_to_recv = ::core::mem::size_of::<int16_t>() as libc::c_ulong
+                as int32_t;
+            rc = recvall(
+                sock,
+                &mut buffer_size as *mut int32_t as *mut libc::c_char,
+                &mut bytes_to_recv,
+                socket_timeout,
+            );
+            if rc <= 0 as libc::c_int
+                || bytes_to_recv as libc::c_ulong
+                    != ::core::mem::size_of::<int16_t>() as libc::c_ulong
+            {
+                return -(1 as libc::c_int);
+            }
+            tot_bytes += rc;
+            bytes_to_recv = ::core::mem::size_of::<int32_t>() as libc::c_ulong
+                as int32_t;
+            rc = recvall(
+                sock,
+                &mut buffer_size as *mut int32_t as *mut libc::c_char,
+                &mut bytes_to_recv,
+                socket_timeout,
+            );
+            if rc <= 0 as libc::c_int
+                || bytes_to_recv as libc::c_ulong
+                    != ::core::mem::size_of::<int32_t>() as libc::c_ulong
+            {
+                return -(1 as libc::c_int);
+            }
+            tot_bytes += rc;
+            buffer_size = __bswap_32(buffer_size as __uint32_t) as int32_t;
+            if buffer_size < 0 as libc::c_int || buffer_size > 65536 as libc::c_int {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Received packet with invalid buffer size\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            pkt_size += buffer_size;
+            *v3_pkt = calloc(
+                1 as libc::c_int as libc::c_ulong,
+                pkt_size as libc::c_ulong,
+            ) as *mut v3_packet;
+            if (*v3_pkt).is_null() {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Could not allocate memory for packet\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            memcpy(
+                *v3_pkt as *mut libc::c_void,
+                &mut packet as *mut v2_packet as *const libc::c_void,
+                common_size as libc::c_ulong,
+            );
+            (**v3_pkt).buffer_length = __bswap_32(buffer_size as __uint32_t) as int32_t;
+            buff_ptr = ((**v3_pkt).buffer).as_mut_ptr();
+        }
+        bytes_to_recv = buffer_size;
+        rc = recvall(sock, buff_ptr, &mut bytes_to_recv, socket_timeout);
+        if rc <= 0 as libc::c_int || rc != buffer_size {
+            if packet_ver >= 3 as libc::c_int {
+                free(*v3_pkt as *mut libc::c_void);
+                *v3_pkt = 0 as *mut v3_packet;
+            } else {
+                free(*v2_pkt as *mut libc::c_void);
+                *v2_pkt = 0 as *mut v2_packet;
+            }
+            if rc < buffer_size {
+                printf(
+                    b"CHECK_NRPE: Receive underflow - only %d bytes received (%zu expected).\n\0"
+                        as *const u8 as *const libc::c_char,
+                    rc,
+                    ::core::mem::size_of::<int32_t>() as libc::c_ulong,
+                );
+            }
+            return -(1 as libc::c_int);
+        } else {
+            tot_bytes += rc;
+        }
+    } else {
+        let mut ssl_0: *mut SSL = ssl_ptr as *mut SSL;
+        loop {
+            rc = SSL_read(
+                ssl_0,
+                &mut packet as *mut v2_packet as *mut libc::c_void,
+                bytes_to_recv,
+            );
+            if !(rc <= 0 as libc::c_int && SSL_get_error(ssl_0, rc) == 2 as libc::c_int)
+            {
+                break;
+            }
+        }
+        if rc <= 0 as libc::c_int || rc != bytes_to_recv {
+            if rc < bytes_to_recv {
+                if packet_ver < 3 as libc::c_int || packet_ver > 4 as libc::c_int {
+                    printf(
+                        b"CHECK_NRPE: Receive header underflow - only %d bytes received (%zu expected).\n\0"
+                            as *const u8 as *const libc::c_char,
+                        rc,
+                        ::core::mem::size_of::<int32_t>() as libc::c_ulong,
+                    );
+                }
+            }
+            return -(1 as libc::c_int);
+        }
+        if packet_ver != __bswap_16(packet.packet_version as __uint16_t) as libc::c_int {
+            printf(
+                b"CHECK_NRPE: Invalid packet version received from server.\n\0"
+                    as *const u8 as *const libc::c_char,
+            );
+            return -(1 as libc::c_int);
+        }
+        if __bswap_16(packet.packet_type as __uint16_t) as libc::c_int
+            != 2 as libc::c_int
+        {
+            printf(
+                b"CHECK_NRPE: Invalid packet type received from server.\n\0" as *const u8
+                    as *const libc::c_char,
+            );
+            return -(1 as libc::c_int);
+        }
+        if packet_ver == 2 as libc::c_int {
+            pkt_size = ::core::mem::size_of::<v2_packet>() as libc::c_ulong as int32_t;
+            if payload_size > 0 as libc::c_int {
+                pkt_size = common_size + payload_size;
+                buffer_size = payload_size;
+            } else {
+                buffer_size = pkt_size - common_size;
+            }
+            *v2_pkt = calloc(
+                1 as libc::c_int as libc::c_ulong,
+                pkt_size as libc::c_ulong,
+            ) as *mut v2_packet;
+            if (*v2_pkt).is_null() {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Could not allocate memory for packet\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            memcpy(
+                *v2_pkt as *mut libc::c_void,
+                &mut packet as *mut v2_packet as *const libc::c_void,
+                common_size as libc::c_ulong,
+            );
+            buff_ptr = ((**v2_pkt).buffer).as_mut_ptr();
+            memset(
+                buff_ptr as *mut libc::c_void,
+                0 as libc::c_int,
+                buffer_size as libc::c_ulong,
+            );
+        } else {
+            pkt_size = (::core::mem::size_of::<v3_packet>() as libc::c_ulong)
+                .wrapping_sub(1 as libc::c_int as libc::c_ulong) as int32_t;
+            bytes_to_recv = ::core::mem::size_of::<int16_t>() as libc::c_ulong
+                as int32_t;
+            loop {
+                rc = SSL_read(
+                    ssl_0,
+                    &mut buffer_size as *mut int32_t as *mut libc::c_void,
+                    bytes_to_recv,
+                );
+                if !(rc <= 0 as libc::c_int
+                    && SSL_get_error(ssl_0, rc) == 2 as libc::c_int)
+                {
+                    break;
+                }
+            }
+            if rc <= 0 as libc::c_int
+                || bytes_to_recv as libc::c_ulong
+                    != ::core::mem::size_of::<int16_t>() as libc::c_ulong
+            {
+                return -(1 as libc::c_int);
+            }
+            tot_bytes += rc;
+            bytes_to_recv = ::core::mem::size_of::<int32_t>() as libc::c_ulong
+                as int32_t;
+            loop {
+                rc = SSL_read(
+                    ssl_0,
+                    &mut buffer_size as *mut int32_t as *mut libc::c_void,
+                    bytes_to_recv,
+                );
+                if !(rc <= 0 as libc::c_int
+                    && SSL_get_error(ssl_0, rc) == 2 as libc::c_int)
+                {
+                    break;
+                }
+            }
+            if rc <= 0 as libc::c_int
+                || bytes_to_recv as libc::c_ulong
+                    != ::core::mem::size_of::<int32_t>() as libc::c_ulong
+            {
+                return -(1 as libc::c_int);
+            }
+            tot_bytes += rc;
+            buffer_size = __bswap_32(buffer_size as __uint32_t) as int32_t;
+            if buffer_size < 0 as libc::c_int || buffer_size > 65536 as libc::c_int {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Received packet with invalid buffer size\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            pkt_size += buffer_size;
+            *v3_pkt = calloc(
+                1 as libc::c_int as libc::c_ulong,
+                pkt_size as libc::c_ulong,
+            ) as *mut v3_packet;
+            if (*v3_pkt).is_null() {
+                logit(
+                    3 as libc::c_int,
+                    b"Error: Could not allocate memory for packet\0" as *const u8
+                        as *const libc::c_char,
+                );
+                return -(1 as libc::c_int);
+            }
+            memcpy(
+                *v3_pkt as *mut libc::c_void,
+                &mut packet as *mut v2_packet as *const libc::c_void,
+                common_size as libc::c_ulong,
+            );
+            (**v3_pkt).buffer_length = __bswap_32(buffer_size as __uint32_t) as int32_t;
+            buff_ptr = ((**v3_pkt).buffer).as_mut_ptr();
+        }
+        bytes_to_recv = buffer_size;
+        loop {
+            loop {
+                rc = SSL_read(
+                    ssl_0,
+                    &mut *buff_ptr.offset(bytes_read as isize) as *mut libc::c_char
+                        as *mut libc::c_void,
+                    bytes_to_recv,
+                );
+                if !(rc <= 0 as libc::c_int
+                    && SSL_get_error(ssl_0, rc) == 2 as libc::c_int)
+                {
+                    break;
+                }
+            }
+            if rc <= 0 as libc::c_int {
+                break;
+            }
+            bytes_read += rc;
+            bytes_to_recv -= rc;
+            tot_bytes += rc;
+        }
+        if rc < 0 as libc::c_int || bytes_read != buffer_size {
+            if packet_ver >= 3 as libc::c_int {
+                free(*v3_pkt as *mut libc::c_void);
+                *v3_pkt = 0 as *mut v3_packet;
+            } else {
+                free(*v2_pkt as *mut libc::c_void);
+                *v2_pkt = 0 as *mut v2_packet;
+            }
+            if bytes_read != buffer_size {
+                if packet_ver >= 3 as libc::c_int {
+                    printf(
+                        b"CHECK_NRPE: Receive buffer size - %ld bytes received (%zu expected).\n\0"
+                            as *const u8 as *const libc::c_char,
+                        bytes_read as libc::c_long,
+                        ::core::mem::size_of::<int32_t>() as libc::c_ulong,
+                    );
+                } else {
+                    printf(
+                        b"CHECK_NRPE: Receive underflow - only %ld bytes received (%zu expected).\n\0"
+                            as *const u8 as *const libc::c_char,
+                        bytes_read as libc::c_long,
+                        ::core::mem::size_of::<int32_t>() as libc::c_ulong,
+                    );
+                }
+            }
+            return -(1 as libc::c_int);
+        }
+    }
+    return tot_bytes;
+}
+#[no_mangle]
 pub unsafe extern "C" fn read_response() -> libc::c_int {
     let mut v2_receive_packet: *mut v2_packet = 0 as *mut v2_packet;
     let mut v3_receive_packet: *mut v3_packet = 0 as *mut v3_packet;
@@ -3741,7 +4121,12 @@ pub unsafe extern "C" fn read_response() -> libc::c_int {
     let mut result: libc::c_int = 0;
     alarm(0 as libc::c_int as libc::c_uint);
     set_sig_handlers();
-    rc = read_packet(sd, ssl, &mut v2_receive_packet, &mut v3_receive_packet);
+    rc = read_packet(
+        sd,
+        ssl as *mut libc::c_void,
+        &mut v2_receive_packet,
+        &mut v3_receive_packet,
+    );
     alarm(0 as libc::c_int as libc::c_uint);
     if use_ssl == 1 as libc::c_int {
         SSL_shutdown(ssl);
